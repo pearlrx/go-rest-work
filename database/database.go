@@ -25,7 +25,7 @@ func InitDB() {
 		log.Fatal(err)
 	}
 
-	if err := DB.Ping(); err != nil {
+	if err = DB.Ping(); err != nil {
 		log.Fatal(err)
 	}
 
@@ -67,6 +67,16 @@ func createTables() {
 }
 
 func insertInitialUsers() {
+	var count int
+	err := DB.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+	if err != nil {
+		log.Fatalf("Failed to check existing data: %v", err)
+	}
+
+	if count > 0 {
+		log.Println("Data already exists in the users table, skipping initial data insertion")
+		return
+	}
 	users := []models.User{
 		{PassportNumber: "1234 567890", Surname: "Иванов", Name: "Иван", Patronymic: "Иванович", Address: "г. Москва, ул. Ленина, д. 5, кв. 1"},
 		{PassportNumber: "2345 678901", Surname: "Петров", Name: "Петр", Patronymic: "Петрович", Address: "г. Санкт-Петербург, Невский пр., д. 10"},
