@@ -6,9 +6,11 @@ import (
 	"github.com/gorilla/mux"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"test-project/database"
+	"test-project/logger"
 	"test-project/models"
 	"time"
 )
@@ -31,26 +33,26 @@ type People struct {
 // @Failure 500 {object} models.ErrorResponse
 // @Router /users [get]
 func GetUsers(w http.ResponseWriter, r *http.Request) {
-	log.Println("GetUsers called")
+	logger.Info("GetUsers called")
 
 	pageStr := r.URL.Query().Get("page")
 	limitStr := r.URL.Query().Get("limit")
-	log.Printf("Received query params - page: %s, limit: %s", pageStr, limitStr)
+	logger.Info("Received query params - page:", pageStr, ", limit:", limitStr)
 
 	page, err := strconv.Atoi(pageStr)
 	if err != nil {
-		log.Printf("Invalid page value, setting to default 1: %v", err)
+		logger.Warning("Invalid page value, setting to default 1: %v", err)
 		page = 1
 	}
 
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit < 1 || limit > 100 {
-		log.Printf("Invalid limit value, setting to default 10: %v", err)
+		logger.Warning("Invalid limit value, setting to default 10: %v", err)
 		limit = 10
 	}
 
 	offset := (page - 1) * limit
-	log.Printf("Computed pagination values - page: %d, limit: %d, offset: %d", page, limit, offset)
+	logger.Info("Computed pagination values - page: %d, limit: %d, offset: %d", page, limit, offset)
 
 	query := `
 		SELECT id, passport_number, surname, name, patronymic, address, created_at, updated_at
@@ -61,19 +63,19 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := database.DB.Query(query, limit, offset)
 	if err != nil {
-		log.Printf("Error executing query: %v", err)
+		logger.Error("Error executing query: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	log.Println("Query executed successfully")
+	logger.Info("Query executed successfully")
 
 	users := make([]models.User, 0)
 	for rows.Next() {
 		var user models.User
 		if err = rows.Scan(&user.ID, &user.PassportNumber, &user.Surname, &user.Name, &user.Patronymic, &user.Address, &user.CreatedAt, &user.UpdatedAt); err != nil {
-			log.Printf("Error scanning row: %v", err)
+			logger.Error("Error scanning row: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -81,7 +83,7 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err = rows.Err(); err != nil {
-		log.Printf("Error in rows iteration: %v", err)
+		logger.Error("Error in rows iteration: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -89,8 +91,8 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Users retrieved: %d", len(users))
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(users); err != nil {
-		log.Printf("Error encoding response: %v", err)
+	if err = json.NewEncoder(w).Encode(users); err != nil {
+		logger.Error("Error encoding response: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 	log.Println("Response sent successfully")
@@ -106,32 +108,32 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} models.ErrorResponse
 // @Router /users [post]
 func CreateUser(w http.ResponseWriter, r *http.Request) {
-	log.Println("CreateUser called")
+	logger.Info("CreateUser called")
 
 	var user models.User
 	err := json.NewDecoder(r.Body).Decode(&user)
 	if err != nil {
-		log.Printf("Failed to decode request body: %v", err)
+		logger.Error("Failed to decode request body: %v", err)
 		http.Error(w, "Failed to decode request body", http.StatusBadRequest)
 		return
 	}
-	log.Printf("User data received: %+v", user)
+	logger.Info("User data received: %+v", user)
 
 	// Разделение паспортного номера на серию и номер
 	passportParts := strings.Split(user.PassportNumber, " ")
 	if len(passportParts) != 2 {
-		log.Println("Invalid passport format")
+		logger.Warning("Invalid passport format")
 		http.Error(w, "Invalid passport format", http.StatusBadRequest)
 		return
 	}
 	passportSerieStr := passportParts[0]
 	passportNumberStr := passportParts[1]
-	log.Printf("Parsed passport number: series=%s, number=%s", passportSerieStr, passportNumberStr)
+	logger.Info("Parsed passport number: series=%s, number=%s", passportSerieStr, passportNumberStr)
 
 	// Проверка корректности серии паспорта
 	_, err = strconv.Atoi(passportSerieStr)
 	if err != nil {
-		log.Printf("Invalid passport series: %v", err)
+		logger.Error("Invalid passport series: %v", err)
 		http.Error(w, "Invalid passport series", http.StatusBadRequest)
 		return
 	}
@@ -139,7 +141,7 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 	// Проверка корректности номера паспорта
 	_, err = strconv.Atoi(passportNumberStr)
 	if err != nil {
-		log.Printf("Invalid passport number: %v", err)
+		logger.Error("Invalid passport number: %v", err)
 		http.Error(w, "Invalid passport number", http.StatusBadRequest)
 		return
 	}
@@ -155,22 +157,43 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 	var userID int
 	err = db.QueryRowContext(r.Context(), query, user.PassportNumber, user.Surname, user.Name, user.Patronymic, user.Address, time.Now(), time.Now()).Scan(&userID)
 	if err != nil {
-		log.Printf("Error executing query: %v", err)
+		logger.Error("Error executing query: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("User created with ID: %d", userID)
+	logger.Info("User created with ID: %d", userID)
 
 	// Устанавливаем ID созданного пользователя
 	user.ID = userID
 
+	// Добавление нового пользователя в файл миграции
+	addUserToMigrationFile(user)
+
 	// Отправка успешного ответа клиенту
 	w.WriteHeader(http.StatusCreated)
 	if err = json.NewEncoder(w).Encode(user); err != nil {
-		log.Printf("Error encoding response: %v", err)
+		logger.Error("Error encoding response: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
-	log.Println("Response sent successfully")
+	logger.Info("Response sent successfully")
+}
+
+func addUserToMigrationFile(user models.User) {
+	filePath := "migrations/20230707120000_insert_initial_users.sql"
+	migrationLine := "INSERT INTO users (passport_number, surname, name, patronymic, address, created_at, updated_at) VALUES " +
+		"('" + user.PassportNumber + "', '" + user.Surname + "', '" + user.Name + "', '" + user.Patronymic + "', '" + user.Address + "', NOW(), NOW());\n"
+
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		logger.Warning("Failed to open migration file: %v", err)
+		return
+	}
+	defer file.Close()
+
+	// Запись строки миграции в файл
+	if _, err = file.WriteString(migrationLine); err != nil {
+		logger.Error("Failed to write to migration file: %v", err)
+	}
 }
 
 // @Summary Update a user
@@ -184,38 +207,35 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} models.ErrorResponse
 // @Router /users/{id} [put]
 func UpdateUser(w http.ResponseWriter, r *http.Request) {
-	log.Println("UpdateUser called")
+	logger.Info("UpdateUser called")
 
 	// Получение ID пользователя из параметров URL
 	params := mux.Vars(r)
 	id, err := strconv.Atoi(params["id"])
 	if err != nil {
-		log.Printf("Invalid user ID: %v", err)
+		logger.Warning("Invalid user ID: %v", err)
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
 	log.Printf("User ID: %d", id)
 
-	// Декодирование данных обновленного пользователя из тела запроса
 	var updatedUser models.User
 	err = json.NewDecoder(r.Body).Decode(&updatedUser)
 	if err != nil {
-		log.Printf("Failed to decode request body: %v", err)
+		logger.Error("Failed to decode request body: %v", err)
 		http.Error(w, "Failed to decode request body", http.StatusBadRequest)
 		return
 	}
 	log.Printf("Updated user data received: %+v", updatedUser)
 
-	// Проверка обязательных полей
 	if updatedUser.Name == "" || updatedUser.Surname == "" {
-		log.Println("Name and Surname are required fields")
+		logger.Error("Name and Surname are required fields")
 		http.Error(w, "Name and Surname are required fields", http.StatusBadRequest)
 		return
 	}
 
 	db := database.DB
 
-	// SQL запрос для обновления данных пользователя
 	query := `
         UPDATE users
         SET name = $1, surname = $2, patronymic = $3, address = $4, updated_at = $5
@@ -223,19 +243,18 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
     `
 	_, err = db.ExecContext(r.Context(), query, updatedUser.Name, updatedUser.Surname, updatedUser.Patronymic, updatedUser.Address, time.Now(), id)
 	if err != nil {
-		log.Printf("Error executing query: %v", err)
+		logger.Error("Error executing query: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("User with ID %d updated successfully", id)
+	logger.Info("User with ID %d updated successfully", id)
 
-	// Устанавливаем ID обновленного пользователя
 	updatedUser.ID = id
 
 	// Отправка успешного ответа клиенту
 	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(updatedUser); err != nil {
-		log.Printf("Error encoding response: %v", err)
+	if err = json.NewEncoder(w).Encode(updatedUser); err != nil {
+		logger.Error("Error encoding response: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -252,39 +271,39 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} models.ErrorResponse
 // @Router /users/{id} [delete]
 func DeleteUser(w http.ResponseWriter, r *http.Request) {
-	log.Println("DeleteUser called")
+	logger.Info("DeleteUser called")
 
 	// Получение ID пользователя из параметров URL
 	params := mux.Vars(r)
 	id, err := strconv.Atoi(params["id"])
 	if err != nil {
-		log.Printf("Invalid user ID: %v", err)
+		logger.Error("Invalid user ID: %v", err)
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
-	log.Printf("User ID: %d", id)
+	logger.Info("User ID: %d", id)
 
 	stmt, err := database.DB.Prepare("DELETE FROM users WHERE id = $1")
 	if err != nil {
-		log.Printf("Error preparing query: %v", err)
+		logger.Error("Error preparing query: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer stmt.Close()
-	log.Println("SQL statement prepared successfully")
+	logger.Info("SQL statement prepared successfully")
 
 	// Выполнение SQL запроса
 	_, err = stmt.Exec(id)
 	if err != nil {
-		log.Printf("Error executing query: %v", err)
+		logger.Error("Error executing query: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("User with ID %d deleted successfully", id)
+	logger.Info("User with ID %d deleted successfully", id)
 
 	// Отправка успешного ответа клиенту
 	w.WriteHeader(http.StatusOK)
-	log.Println("Response sent successfully")
+	logger.Info("Response sent successfully")
 }
 
 // @Summary Get tasks for a user
@@ -299,16 +318,16 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} models.ErrorResponse
 // @Router /users/{id}/tasks [get]
 func GetUserTasks(w http.ResponseWriter, r *http.Request) {
-	log.Println("GetUserTasks called")
+	logger.Info("GetUserTasks called")
 
 	params := mux.Vars(r)
 	userID, err := strconv.Atoi(params["id"])
 	if err != nil {
-		log.Printf("Invalid user ID: %v", err)
+		logger.Error("Invalid user ID: %v", err)
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
-	log.Printf("User ID: %d", userID)
+	logger.Info("User ID: %d", userID)
 
 	// Получаем параметры startTime и endTime из URL
 	startDateStr := r.URL.Query().Get("startTime")
@@ -322,14 +341,14 @@ func GetUserTasks(w http.ResponseWriter, r *http.Request) {
 	} else {
 		startDate, err = time.Parse("2006-01-02", startDateStr)
 		if err != nil {
-			log.Printf("Invalid start_time format: %v", err)
+			logger.Warning("Invalid start_time format: %v", err)
 			http.Error(w, "Invalid start_time format, expected YYYY-MM-DD", http.StatusBadRequest)
 			return
 		}
 
 		endDate, err = time.Parse("2006-01-02", endDateStr)
 		if err != nil {
-			log.Printf("Invalid end_time format: %v", err)
+			logger.Warning("Invalid end_time format: %v", err)
 			http.Error(w, "Invalid end_time format, expected YYYY-MM-DD", http.StatusBadRequest)
 			return
 		}
@@ -356,28 +375,28 @@ func GetUserTasks(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := database.DB.Query(query, paramsList...)
 	if err != nil {
-		log.Printf("Error executing query: %v", err)
+		logger.Error("Error executing query: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
-	log.Println("SQL query executed successfully")
+	logger.Info("SQL query executed successfully")
 
 	// Обработка результатов запроса
 	for rows.Next() {
 		var task models.Task
 		if err = rows.Scan(&task.ID, &task.UserID, &task.Name, &task.Hours, &task.Minutes, &task.CreatedAt, &task.UpdatedAt, &task.StartTime, &task.EndTime); err != nil {
-			log.Printf("Error scanning row: %v", err)
+			logger.Error("Error scanning row: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		tasks = append(tasks, task)
 	}
-	log.Printf("Retrieved %d tasks", len(tasks))
+	logger.Info("Retrieved %d tasks", len(tasks))
 
 	// Проверка на ошибки при переборе строк
 	if err = rows.Err(); err != nil {
-		log.Printf("Error iterating over rows: %v", err)
+		logger.Error("Error iterating over rows: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -385,7 +404,7 @@ func GetUserTasks(w http.ResponseWriter, r *http.Request) {
 	// Отправка успешного ответа клиенту с данными задач
 	w.Header().Set("Content-Type", "application/json")
 	if err = json.NewEncoder(w).Encode(tasks); err != nil {
-		log.Printf("Error encoding response: %v", err)
+		logger.Error("Error encoding response: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -406,34 +425,34 @@ func StartTask(w http.ResponseWriter, r *http.Request) {
 
 	var task models.Task
 	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
-		log.Printf("Error decoding request payload: %v", err)
+		logger.Error("Error decoding request payload: %v", err)
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("Decoded task: %+v", task)
+	logger.Info("Decoded task: %+v", task)
 
 	var userID int
 	err := database.DB.QueryRow("SELECT id FROM users WHERE id = $1", task.UserID).Scan(&userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			log.Printf("User not found: %d", task.UserID)
+			logger.Warning("User not found: %d", task.UserID)
 			http.Error(w, "User not found", http.StatusNotFound)
 		} else {
-			log.Printf("Error querying user: %v", err)
+			logger.Error("Error querying user: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 		return
 	}
 
-	log.Printf("User found: %d", userID)
+	logger.Info("User found: %d", userID)
 
 	task.StartTime = time.Now().UTC()
 	now := time.Now().UTC()
 	task.CreatedAt = now
 	task.UpdatedAt = now
 
-	log.Printf("Task timestamps: StartTime=%v, CreatedAt=%v, UpdatedAt=%v", task.StartTime, task.CreatedAt, task.UpdatedAt)
+	logger.Info("Task timestamps: StartTime=%v, CreatedAt=%v, UpdatedAt=%v", task.StartTime, task.CreatedAt, task.UpdatedAt)
 
 	query := `
 		INSERT INTO tasks (user_id, name, created_at, updated_at, start_time)
@@ -442,7 +461,7 @@ func StartTask(w http.ResponseWriter, r *http.Request) {
 	`
 	err = database.DB.QueryRow(query, task.UserID, task.Name, task.CreatedAt, task.UpdatedAt, task.StartTime).Scan(&task.ID)
 	if err != nil {
-		log.Printf("Error inserting task: %v", err)
+		logger.Error("Error inserting task: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -450,8 +469,8 @@ func StartTask(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Task created with ID: %d", task.ID)
 
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(task); err != nil {
-		log.Printf("Error encoding response: %v", err)
+	if err = json.NewEncoder(w).Encode(task); err != nil {
+		logger.Error("Error encoding response: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -466,41 +485,41 @@ func StartTask(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} models.ErrorResponse
 // @Router /tasks/stop [post]
 func StopTask(w http.ResponseWriter, r *http.Request) {
-	log.Println("StopTask called")
+	logger.Info("StopTask called")
 
 	var task models.Task
 	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
-		log.Printf("Error decoding request payload: %v", err)
+		logger.Error("Error decoding request payload: %v", err)
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
 	taskID := task.ID
-	log.Printf("Task ID: %d", taskID)
+	logger.Info("Task ID: %d", taskID)
 
 	task.EndTime = time.Now().UTC()
-	log.Printf("EndTime set to: %v", task.EndTime)
+	logger.Info("EndTime set to: %v", task.EndTime)
 
 	var startTime time.Time
 	err := database.DB.QueryRow("SELECT start_time FROM tasks WHERE id = $1", taskID).Scan(&startTime)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			log.Printf("Task not found: %d", taskID)
+			logger.Error("Task not found: %d", taskID)
 			http.Error(w, "Task not found", http.StatusNotFound)
 		} else {
-			log.Printf("Error querying task start_time: %v", err)
+			logger.Error("Error querying task start_time: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 		return
 	}
 
-	log.Printf("Task start_time: %v", startTime)
+	logger.Info("Task start_time: %v", startTime)
 
 	duration := task.EndTime.Sub(startTime)
 	task.Hours = int(duration.Hours())
 	task.Minutes = int(duration.Minutes()) % 60
 
-	log.Printf("Task duration calculated: %d hours, %d minutes", task.Hours, task.Minutes)
+	logger.Info("Task duration calculated: %d hours, %d minutes", task.Hours, task.Minutes)
 
 	_, err = database.DB.Exec(`
 		UPDATE tasks 
@@ -508,12 +527,12 @@ func StopTask(w http.ResponseWriter, r *http.Request) {
 		WHERE id = $5`,
 		task.EndTime, task.Hours, task.Minutes, time.Now().UTC(), taskID)
 	if err != nil {
-		log.Printf("Error updating task: %v", err)
+		logger.Error("Error updating task: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("Task updated successfully: %d", taskID)
+	logger.Info("Task updated successfully: %d", taskID)
 
 	w.WriteHeader(http.StatusOK)
 }

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"github.com/joho/godotenv"
 	httpSwagger "github.com/swaggo/http-swagger"
 	"log"
 	"net/http"
+	"os"
 	"test-project/database"
 	_ "test-project/docs" // Подключаем пакет с автосгенерированными Swagger документами
 	"test-project/routers"
@@ -22,13 +24,19 @@ func main() {
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
+	apiHost := os.Getenv("API_HOST")
+	apiPort := os.Getenv("API_PORT")
+
 	database.InitDB()
 	router := routers.InitRouter()
 
-	// Настройка маршрутов для Swagger
+	swaggerURL := fmt.Sprintf("http://%s:%s/swagger/doc.json")
+
 	router.PathPrefix("/swagger/").Handler(httpSwagger.Handler(
-		httpSwagger.URL("http://localhost:8000/swagger/doc.json"), // Путь к вашему swagger.json файлу
+		httpSwagger.URL(swaggerURL), // Путь к вашему swagger.json файлу
 	))
 
-	log.Fatal(http.ListenAndServe(":8000", router))
+	serverAddress := fmt.Sprintf("%s:%s", apiHost, apiPort)
+
+	log.Fatal(http.ListenAndServe(serverAddress, router))
 }

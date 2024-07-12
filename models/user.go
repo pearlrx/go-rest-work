@@ -4,7 +4,7 @@ import "time"
 
 type User struct {
 	ID             int       `json:"id"`
-	PassportNumber string    `json:"passportNumber"`
+	PassportNumber string    `json:"passport_number"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
 	Surname        string    `json:"surname"`
