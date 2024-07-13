@@ -238,10 +238,10 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	query := `
         UPDATE users
-        SET name = $1, surname = $2, patronymic = $3, address = $4, updated_at = $5
-        WHERE id = $6
+        SET name = $1, surname = $2, patronymic = $3, address = $4, updated_at = $5, passport_number = $6
+        WHERE id = $7
     `
-	_, err = db.ExecContext(r.Context(), query, updatedUser.Name, updatedUser.Surname, updatedUser.Patronymic, updatedUser.Address, time.Now(), id)
+	_, err = db.ExecContext(r.Context(), query, updatedUser.Name, updatedUser.Surname, updatedUser.Patronymic, updatedUser.Address, time.Now(), updatedUser.PassportNumber, id)
 	if err != nil {
 		logger.Error("Error executing query: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
