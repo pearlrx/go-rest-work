@@ -119,7 +119,6 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Info("User data received: %+v", user)
 
-	// Разделение паспортного номера на серию и номер
 	passportParts := strings.Split(user.PassportNumber, " ")
 	if len(passportParts) != 2 {
 		logger.Warning("Invalid passport format")
@@ -130,25 +129,22 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 	passportNumberStr := passportParts[1]
 	logger.Info("Parsed passport number: series=%s, number=%s", passportSerieStr, passportNumberStr)
 
-	// Проверка корректности серии паспорта
 	_, err = strconv.Atoi(passportSerieStr)
-	if err != nil {
-		logger.Error("Invalid passport series: %v", err)
-		http.Error(w, "Invalid passport series", http.StatusBadRequest)
+	if err != nil || len(passportSerieStr) != 4 {
+		logger.Error("Invalid passport series format: %v", passportSerieStr)
+		http.Error(w, "Invalid passport series format", http.StatusBadRequest)
 		return
 	}
 
-	// Проверка корректности номера паспорта
 	_, err = strconv.Atoi(passportNumberStr)
-	if err != nil {
-		logger.Error("Invalid passport number: %v", err)
-		http.Error(w, "Invalid passport number", http.StatusBadRequest)
+	if err != nil || len(passportNumberStr) != 6 {
+		logger.Error("Invalid passport number format: %v", passportNumberStr)
+		http.Error(w, "Invalid passport number format", http.StatusBadRequest)
 		return
 	}
 
 	db := database.DB
 
-	// SQL запрос для вставки нового пользователя
 	query := `
         INSERT INTO users(passport_number, surname, name, patronymic, address, created_at, updated_at)
         VALUES($1, $2, $3, $4, $5, $6, $7)
@@ -163,13 +159,10 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Info("User created with ID: %d", userID)
 
-	// Устанавливаем ID созданного пользователя
 	user.ID = userID
 
-	// Добавление нового пользователя в файл миграции
 	addUserToMigrationFile(user)
 
-	// Отправка успешного ответа клиенту
 	w.WriteHeader(http.StatusCreated)
 	if err = json.NewEncoder(w).Encode(user); err != nil {
 		logger.Error("Error encoding response: %v", err)
@@ -209,7 +202,6 @@ func addUserToMigrationFile(user models.User) {
 func UpdateUser(w http.ResponseWriter, r *http.Request) {
 	logger.Info("UpdateUser called")
 
-	// Получение ID пользователя из параметров URL
 	params := mux.Vars(r)
 	id, err := strconv.Atoi(params["id"])
 	if err != nil {
@@ -251,7 +243,6 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	updatedUser.ID = id
 
-	// Отправка успешного ответа клиенту
 	w.WriteHeader(http.StatusOK)
 	if err = json.NewEncoder(w).Encode(updatedUser); err != nil {
 		logger.Error("Error encoding response: %v", err)
@@ -329,11 +320,9 @@ func GetUserTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Info("User ID: %d", userID)
 
-	// Получаем параметры startTime и endTime из URL
 	startDateStr := r.URL.Query().Get("startTime")
 	endDateStr := r.URL.Query().Get("endTime")
 
-	// Если startTime и endTime не заданы, устанавливаем их как начало и конец времени
 	var startDate, endDate time.Time
 	if startDateStr == "" || endDateStr == "" {
 		startDate = time.Time{}    // или другое начальное значение по вашему выбору
@@ -360,7 +349,6 @@ func GetUserTasks(w http.ResponseWriter, r *http.Request) {
 		FROM tasks
 		WHERE user_id = $1`
 
-	// Добавляем условия для времени, если они были указаны
 	if !startDate.IsZero() && !endDate.IsZero() {
 		query += ` AND start_time >= $2 AND end_time <= $3`
 	}
@@ -382,7 +370,6 @@ func GetUserTasks(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	logger.Info("SQL query executed successfully")
 
-	// Обработка результатов запроса
 	for rows.Next() {
 		var task models.Task
 		if err = rows.Scan(&task.ID, &task.UserID, &task.Name, &task.Hours, &task.Minutes, &task.CreatedAt, &task.UpdatedAt, &task.StartTime, &task.EndTime); err != nil {
@@ -394,7 +381,6 @@ func GetUserTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Info("Retrieved %d tasks", len(tasks))
 
-	// Проверка на ошибки при переборе строк
 	if err = rows.Err(); err != nil {
 		logger.Error("Error iterating over rows: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
