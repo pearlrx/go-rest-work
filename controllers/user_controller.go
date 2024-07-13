@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"test-project/database"
 	"test-project/logger"
 	"test-project/models"
@@ -119,27 +118,8 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Info("User data received: %+v", user)
 
-	passportParts := strings.Split(user.PassportNumber, " ")
-	if len(passportParts) != 2 {
-		logger.Warning("Invalid passport format")
-		http.Error(w, "Invalid passport format", http.StatusBadRequest)
-		return
-	}
-	passportSerieStr := passportParts[0]
-	passportNumberStr := passportParts[1]
-	logger.Info("Parsed passport number: series=%s, number=%s", passportSerieStr, passportNumberStr)
-
-	_, err = strconv.Atoi(passportSerieStr)
-	if err != nil || len(passportSerieStr) != 4 {
-		logger.Error("Invalid passport series format: %v", passportSerieStr)
-		http.Error(w, "Invalid passport series format", http.StatusBadRequest)
-		return
-	}
-
-	_, err = strconv.Atoi(passportNumberStr)
-	if err != nil || len(passportNumberStr) != 6 {
-		logger.Error("Invalid passport number format: %v", passportNumberStr)
-		http.Error(w, "Invalid passport number format", http.StatusBadRequest)
+	_, _, err = ValidatePassportNumber(user.PassportNumber, w)
+	if err != nil {
 		return
 	}
 
@@ -226,6 +206,11 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_, _, err = ValidatePassportNumber(updatedUser.PassportNumber, w)
+	if err != nil {
+		return
+	}
+
 	db := database.DB
 
 	query := `
@@ -233,7 +218,7 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
         SET name = $1, surname = $2, patronymic = $3, address = $4, updated_at = $5, passport_number = $6
         WHERE id = $7
     `
-	_, err = db.ExecContext(r.Context(), query, updatedUser.Name, updatedUser.Surname, updatedUser.Patronymic, updatedUser.Address, time.Now(), updatedUser.PassportNumber, id)
+	_, err = db.ExecContext(r.Context(), query, updatedUser.Name, updatedUser.Surname, updatedUser.Patronymic, updatedUser.Address, time.Now(), updatedUser.PassportNumber, updatedUser.ID)
 	if err != nil {
 		logger.Error("Error executing query: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -283,7 +268,6 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 	defer stmt.Close()
 	logger.Info("SQL statement prepared successfully")
 
-	// Выполнение SQL запроса
 	_, err = stmt.Exec(id)
 	if err != nil {
 		logger.Error("Error executing query: %v", err)
@@ -292,7 +276,6 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Info("User with ID %d deleted successfully", id)
 
-	// Отправка успешного ответа клиенту
 	w.WriteHeader(http.StatusOK)
 	logger.Info("Response sent successfully")
 }

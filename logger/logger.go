@@ -16,17 +16,14 @@ func Info(format string, v ...interface{}) {
 	infoLogger.Printf(format, v...)
 }
 
-// Warning logs a warning message using Printf for formatting
 func Warning(format string, v ...interface{}) {
 	warningLogger.Printf(format, v...)
 }
 
-// Error logs an error message using Printf for formatting
 func Error(format string, v ...interface{}) {
 	errorLogger.Printf(format, v...)
 }
 
-// Fatal logs a fatal message using Printf for formatting and then exits the program
 func Fatal(format string, v ...interface{}) {
 	fatalLogger.Fatalf(format, v...)
 }
