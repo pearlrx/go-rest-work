@@ -1,13 +1,14 @@
 package controllers
 
 import (
-	"database/sql"
 	"encoding/json"
+	"fmt"
 	"github.com/gorilla/mux"
+	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
+	"strings"
 	"test-project/database"
 	"test-project/logger"
 	"test-project/models"
@@ -151,24 +152,6 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 	logger.Info("Response sent successfully")
 }
 
-func addUserToMigrationFile(user models.User) {
-	filePath := "migrations/20230707120000_insert_initial_users.sql"
-	migrationLine := "INSERT INTO users (passport_number, surname, name, patronymic, address, created_at, updated_at) VALUES " +
-		"('" + user.PassportNumber + "', '" + user.Surname + "', '" + user.Name + "', '" + user.Patronymic + "', '" + user.Address + "', NOW(), NOW());\n"
-
-	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		logger.Warning("Failed to open migration file: %v", err)
-		return
-	}
-	defer file.Close()
-
-	// Запись строки миграции в файл
-	if _, err = file.WriteString(migrationLine); err != nil {
-		logger.Error("Failed to write to migration file: %v", err)
-	}
-}
-
 // @Summary Update a user
 // @Description Update user information
 // @Tags users
@@ -189,7 +172,7 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
-	log.Printf("User ID: %d", id)
+	logger.Info("User ID: %d", id)
 
 	var updatedUser models.User
 	err = json.NewDecoder(r.Body).Decode(&updatedUser)
@@ -198,7 +181,7 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to decode request body", http.StatusBadRequest)
 		return
 	}
-	log.Printf("Updated user data received: %+v", updatedUser)
+	logger.Info("Updated user data received: %+v", updatedUser)
 
 	if updatedUser.Name == "" || updatedUser.Surname == "" {
 		logger.Error("Name and Surname are required fields")
@@ -206,6 +189,7 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Проверка номера паспорта
 	_, _, err = ValidatePassportNumber(updatedUser.PassportNumber, w)
 	if err != nil {
 		return
@@ -213,19 +197,38 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	db := database.DB
 
+	// Запрос на обновление данных
 	query := `
         UPDATE users
-        SET name = $1, surname = $2, patronymic = $3, address = $4, updated_at = $5, passport_number = $6
+        SET passport_number = $1, surname = $2, name = $3, patronymic = $4, address = $5, updated_at = $6
         WHERE id = $7
     `
-	_, err = db.ExecContext(r.Context(), query, updatedUser.Name, updatedUser.Surname, updatedUser.Patronymic, updatedUser.Address, time.Now(), updatedUser.PassportNumber, updatedUser.ID)
+	result, err := db.ExecContext(r.Context(), query, updatedUser.PassportNumber, updatedUser.Surname, updatedUser.Name, updatedUser.Patronymic, updatedUser.Address, time.Now(), id)
 	if err != nil {
-		logger.Error("Error executing query: %v", err)
+		logger.Error("Error executing update query: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		logger.Error("Error getting rows affected: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if rowsAffected == 0 {
+		logger.Warning("No rows updated for user ID %d", id)
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
 	logger.Info("User with ID %d updated successfully", id)
 
+	// Обновление миграционного файла
+	updateUserInMigrationFile(updatedUser, id)
+
+	// Установка ID после успешного обновления
 	updatedUser.ID = id
 
 	w.WriteHeader(http.StatusOK)
@@ -234,7 +237,47 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Println("Response sent successfully")
+	logger.Info("Response sent successfully")
+}
+
+func updateUserInMigrationFile(updatedUser models.User, id int) {
+	filePath := "migrations/20230707120000_insert_initial_users.sql"
+
+	fileContent, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		logger.Warning("Failed to read migration file: %v", err)
+		return
+	}
+
+	lines := strings.Split(string(fileContent), "\n")
+
+	newMigrationLine := fmt.Sprintf(
+		"INSERT INTO users (id, passport_number, surname, name, patronymic, address, created_at, updated_at) VALUES (%d, '%s', '%s', '%s', '%s', '%s', NOW(), NOW());",
+		id, updatedUser.PassportNumber, updatedUser.Surname, updatedUser.Name, updatedUser.Patronymic, updatedUser.Address,
+	)
+
+	updated := false
+	for i, line := range lines {
+		if strings.Contains(line, fmt.Sprintf("(%d,", id)) {
+			lines[i] = newMigrationLine
+			updated = true
+			break
+		}
+	}
+
+	if !updated {
+		logger.Warning("User with ID %d not found in migration file.", id)
+		return
+	}
+
+	// Запись обновленных данных обратно в файл
+	output := strings.Join(lines, "\n")
+	err = ioutil.WriteFile(filePath, []byte(output), 0644)
+	if err != nil {
+		logger.Error("Failed to write to migration file: %v", err)
+	} else {
+		logger.Info("Successfully updated migration line for user %s %s", updatedUser.Name, updatedUser.Surname)
+	}
 }
 
 // @Summary Delete a user
@@ -259,249 +302,54 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Info("User ID: %d", id)
 
-	stmt, err := database.DB.Prepare("DELETE FROM users WHERE id = $1")
+	tx, err := database.DB.Begin()
 	if err != nil {
-		logger.Error("Error preparing query: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logger.Error("Error starting transaction: %v", err)
+		http.Error(w, "Error starting transaction", http.StatusInternalServerError)
 		return
 	}
-	defer stmt.Close()
-	logger.Info("SQL statement prepared successfully")
 
-	_, err = stmt.Exec(id)
+	// Удаление задач, связанных с пользователем
+	_, err = tx.Exec("DELETE FROM tasks WHERE user_id = $1", id)
 	if err != nil {
-		logger.Error("Error executing query: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logger.Error("Error deleting tasks: %v", err)
+		tx.Rollback()
+		http.Error(w, "Error deleting tasks", http.StatusInternalServerError)
+		return
+	}
+	logger.Info("Tasks for user ID %d deleted successfully", id)
+
+	// Удаление пользователя
+	_, err = tx.Exec("DELETE FROM users WHERE id = $1", id)
+	if err != nil {
+		logger.Error("Error deleting user: %v", err)
+		tx.Rollback()
+		http.Error(w, "Error deleting user", http.StatusInternalServerError)
 		return
 	}
 	logger.Info("User with ID %d deleted successfully", id)
 
+	// Завершение транзакции
+	err = tx.Commit()
+	if err != nil {
+		logger.Error("Error committing transaction: %v", err)
+		http.Error(w, "Error committing transaction", http.StatusInternalServerError)
+		return
+	}
+
+	// Обновление миграционного файла
+	if err = removeUserFromMigrationFile(id); err != nil {
+		logger.Error("Error removing user from migration file: %v", err)
+		http.Error(w, "Error removing user from migration file", http.StatusInternalServerError)
+		return
+	}
+
+	if err = removeTaskFromMigrationFile(id); err != nil {
+		logger.Error("Error removing task from migration file: %v", err)
+		http.Error(w, "Error removing task from migration file", http.StatusInternalServerError)
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 	logger.Info("Response sent successfully")
-}
-
-// @Summary Get tasks for a user
-// @Description Get tasks based on user ID and optional date range
-// @Tags tasks
-// @Accept json
-// @Produce json
-// @Param id path int true "User ID"
-// @Param startTime query string false "Start date (YYYY-MM-DD)"
-// @Param endTime query string false "End date (YYYY-MM-DD)"
-// @Success 200 {array} models.Task
-// @Failure 500 {object} models.ErrorResponse
-// @Router /users/{id}/tasks [get]
-func GetUserTasks(w http.ResponseWriter, r *http.Request) {
-	logger.Info("GetUserTasks called")
-
-	params := mux.Vars(r)
-	userID, err := strconv.Atoi(params["id"])
-	if err != nil {
-		logger.Error("Invalid user ID: %v", err)
-		http.Error(w, "Invalid user ID", http.StatusBadRequest)
-		return
-	}
-	logger.Info("User ID: %d", userID)
-
-	startDateStr := r.URL.Query().Get("startTime")
-	endDateStr := r.URL.Query().Get("endTime")
-
-	var startDate, endDate time.Time
-	if startDateStr == "" || endDateStr == "" {
-		startDate = time.Time{}    // или другое начальное значение по вашему выбору
-		endDate = time.Now().UTC() // или другое текущее время по вашему выбору
-	} else {
-		startDate, err = time.Parse("2006-01-02", startDateStr)
-		if err != nil {
-			logger.Warning("Invalid start_time format: %v", err)
-			http.Error(w, "Invalid start_time format, expected YYYY-MM-DD", http.StatusBadRequest)
-			return
-		}
-
-		endDate, err = time.Parse("2006-01-02", endDateStr)
-		if err != nil {
-			logger.Warning("Invalid end_time format: %v", err)
-			http.Error(w, "Invalid end_time format, expected YYYY-MM-DD", http.StatusBadRequest)
-			return
-		}
-	}
-
-	var tasks []models.Task
-	query := `
-		SELECT id, user_id, name, hours, minutes, created_at, updated_at, start_time, end_time
-		FROM tasks
-		WHERE user_id = $1`
-
-	if !startDate.IsZero() && !endDate.IsZero() {
-		query += ` AND start_time >= $2 AND end_time <= $3`
-	}
-
-	query += ` ORDER BY hours DESC, minutes DESC`
-
-	// Формируем параметры для выполнения запроса
-	paramsList := []interface{}{userID}
-	if !startDate.IsZero() && !endDate.IsZero() {
-		paramsList = append(paramsList, startDate, endDate)
-	}
-
-	rows, err := database.DB.Query(query, paramsList...)
-	if err != nil {
-		logger.Error("Error executing query: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-	logger.Info("SQL query executed successfully")
-
-	for rows.Next() {
-		var task models.Task
-		if err = rows.Scan(&task.ID, &task.UserID, &task.Name, &task.Hours, &task.Minutes, &task.CreatedAt, &task.UpdatedAt, &task.StartTime, &task.EndTime); err != nil {
-			logger.Error("Error scanning row: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		tasks = append(tasks, task)
-	}
-	logger.Info("Retrieved %d tasks", len(tasks))
-
-	if err = rows.Err(); err != nil {
-		logger.Error("Error iterating over rows: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Отправка успешного ответа клиенту с данными задач
-	w.Header().Set("Content-Type", "application/json")
-	if err = json.NewEncoder(w).Encode(tasks); err != nil {
-		logger.Error("Error encoding response: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	log.Println("Response sent successfully")
-}
-
-// @Summary Start a new task
-// @Description Create a new task for a user
-// @Tags tasks
-// @Accept json
-// @Produce json
-// @Param task body models.Task true "Task information"
-// @Success 201 {object} models.Task
-// @Failure 500 {object} models.ErrorResponse
-// @Router /tasks/start [post]
-func StartTask(w http.ResponseWriter, r *http.Request) {
-	log.Println("StartTask called")
-
-	var task models.Task
-	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
-		logger.Error("Error decoding request payload: %v", err)
-		http.Error(w, "Invalid request payload", http.StatusBadRequest)
-		return
-	}
-
-	logger.Info("Decoded task: %+v", task)
-
-	var userID int
-	err := database.DB.QueryRow("SELECT id FROM users WHERE id = $1", task.UserID).Scan(&userID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			logger.Warning("User not found: %d", task.UserID)
-			http.Error(w, "User not found", http.StatusNotFound)
-		} else {
-			logger.Error("Error querying user: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-		return
-	}
-
-	logger.Info("User found: %d", userID)
-
-	task.StartTime = time.Now().UTC()
-	now := time.Now().UTC()
-	task.CreatedAt = now
-	task.UpdatedAt = now
-
-	logger.Info("Task timestamps: StartTime=%v, CreatedAt=%v, UpdatedAt=%v", task.StartTime, task.CreatedAt, task.UpdatedAt)
-
-	query := `
-		INSERT INTO tasks (user_id, name, created_at, updated_at, start_time)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id
-	`
-	err = database.DB.QueryRow(query, task.UserID, task.Name, task.CreatedAt, task.UpdatedAt, task.StartTime).Scan(&task.ID)
-	if err != nil {
-		logger.Error("Error inserting task: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	log.Printf("Task created with ID: %d", task.ID)
-
-	w.WriteHeader(http.StatusCreated)
-	if err = json.NewEncoder(w).Encode(task); err != nil {
-		logger.Error("Error encoding response: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-// @Summary Stop a task
-// @Description Stop a task and calculate duration
-// @Tags tasks
-// @Accept json
-// @Produce json
-// @Param task body models.Task true "Task information"
-// @Success 200
-// @Failure 500 {object} models.ErrorResponse
-// @Router /tasks/stop [post]
-func StopTask(w http.ResponseWriter, r *http.Request) {
-	logger.Info("StopTask called")
-
-	var task models.Task
-	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
-		logger.Error("Error decoding request payload: %v", err)
-		http.Error(w, "Invalid request payload", http.StatusBadRequest)
-		return
-	}
-
-	taskID := task.ID
-	logger.Info("Task ID: %d", taskID)
-
-	task.EndTime = time.Now().UTC()
-	logger.Info("EndTime set to: %v", task.EndTime)
-
-	var startTime time.Time
-	err := database.DB.QueryRow("SELECT start_time FROM tasks WHERE id = $1", taskID).Scan(&startTime)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			logger.Error("Task not found: %d", taskID)
-			http.Error(w, "Task not found", http.StatusNotFound)
-		} else {
-			logger.Error("Error querying task start_time: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-		return
-	}
-
-	logger.Info("Task start_time: %v", startTime)
-
-	duration := task.EndTime.Sub(startTime)
-	task.Hours = int(duration.Hours())
-	task.Minutes = int(duration.Minutes()) % 60
-
-	logger.Info("Task duration calculated: %d hours, %d minutes", task.Hours, task.Minutes)
-
-	_, err = database.DB.Exec(`
-		UPDATE tasks 
-		SET end_time = $1, hours = $2, minutes = $3, updated_at = $4 
-		WHERE id = $5`,
-		task.EndTime, task.Hours, task.Minutes, time.Now().UTC(), taskID)
-	if err != nil {
-		logger.Error("Error updating task: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	logger.Info("Task updated successfully: %d", taskID)
-
-	w.WriteHeader(http.StatusOK)
 }
