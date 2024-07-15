@@ -39,7 +39,7 @@ func InitDB() {
 	}
 	logger.Info("Database initialization complete")
 
-	if err = syncSequence(); err != nil {
+	if err = updateUserSequence(); err != nil {
 		log.Fatalf("Error syncing sequence: %v", err)
 	}
 
@@ -47,7 +47,6 @@ func InitDB() {
 }
 
 func runSQLScript(filePath, tableName string) error {
-	// Проверка наличия данных в соответствующей таблице
 	var count int
 	err := DB.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&count)
 	if err != nil {
@@ -59,13 +58,11 @@ func runSQLScript(filePath, tableName string) error {
 		return nil
 	}
 
-	// Чтение SQL скрипта из файла
 	script, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("could not read SQL file: %v", err)
 	}
 
-	// Разделение скрипта на отдельные запросы
 	queries := strings.Split(string(script), ";")
 	for _, query := range queries {
 		query = strings.TrimSpace(query)
@@ -83,23 +80,12 @@ func runSQLScript(filePath, tableName string) error {
 	return nil
 }
 
-func syncSequence() error {
-	// Определите имя последовательности. Замените 'users_id_seq' на фактическое имя вашей последовательности.
-	sequenceName := "users_id_seq"
-
-	// Найдите текущее максимальное значение в таблице.
-	var maxID int
-	err := DB.QueryRow("SELECT COALESCE(MAX(id), 0) FROM users").Scan(&maxID)
+func updateUserSequence() error {
+	_, err := DB.Exec(`SELECT setval(pg_get_serial_sequence('users', 'id'), COALESCE(MAX(id), 1)) FROM users`)
 	if err != nil {
-		return fmt.Errorf("could not get max ID from users: %v", err)
+		return fmt.Errorf("could not update user sequence: %v", err)
 	}
 
-	// Установите значение последовательности на текущее максимальное значение.
-	_, err = DB.Exec(fmt.Sprintf("SELECT SETVAL('%s', %d, false)", sequenceName, maxID))
-	if err != nil {
-		return fmt.Errorf("could not set sequence value: %v", err)
-	}
-
-	logger.Info("Sequence synchronized successfully.")
+	logger.Info("User sequence updated successfully")
 	return nil
 }

@@ -2,13 +2,10 @@ package controllers
 
 import (
 	"encoding/json"
-	"fmt"
 	"github.com/gorilla/mux"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"test-project/database"
 	"test-project/logger"
 	"test-project/models"
@@ -189,7 +186,6 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Проверка номера паспорта
 	_, _, err = ValidatePassportNumber(updatedUser.PassportNumber, w)
 	if err != nil {
 		return
@@ -197,7 +193,6 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	db := database.DB
 
-	// Запрос на обновление данных
 	query := `
         UPDATE users
         SET passport_number = $1, surname = $2, name = $3, patronymic = $4, address = $5, updated_at = $6
@@ -225,10 +220,8 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info("User with ID %d updated successfully", id)
 
-	// Обновление миграционного файла
 	updateUserInMigrationFile(updatedUser, id)
 
-	// Установка ID после успешного обновления
 	updatedUser.ID = id
 
 	w.WriteHeader(http.StatusOK)
@@ -238,46 +231,6 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logger.Info("Response sent successfully")
-}
-
-func updateUserInMigrationFile(updatedUser models.User, id int) {
-	filePath := "migrations/20230707120000_insert_initial_users.sql"
-
-	fileContent, err := ioutil.ReadFile(filePath)
-	if err != nil {
-		logger.Warning("Failed to read migration file: %v", err)
-		return
-	}
-
-	lines := strings.Split(string(fileContent), "\n")
-
-	newMigrationLine := fmt.Sprintf(
-		"INSERT INTO users (id, passport_number, surname, name, patronymic, address, created_at, updated_at) VALUES (%d, '%s', '%s', '%s', '%s', '%s', NOW(), NOW());",
-		id, updatedUser.PassportNumber, updatedUser.Surname, updatedUser.Name, updatedUser.Patronymic, updatedUser.Address,
-	)
-
-	updated := false
-	for i, line := range lines {
-		if strings.Contains(line, fmt.Sprintf("(%d,", id)) {
-			lines[i] = newMigrationLine
-			updated = true
-			break
-		}
-	}
-
-	if !updated {
-		logger.Warning("User with ID %d not found in migration file.", id)
-		return
-	}
-
-	// Запись обновленных данных обратно в файл
-	output := strings.Join(lines, "\n")
-	err = ioutil.WriteFile(filePath, []byte(output), 0644)
-	if err != nil {
-		logger.Error("Failed to write to migration file: %v", err)
-	} else {
-		logger.Info("Successfully updated migration line for user %s %s", updatedUser.Name, updatedUser.Surname)
-	}
 }
 
 // @Summary Delete a user
@@ -292,7 +245,6 @@ func updateUserInMigrationFile(updatedUser models.User, id int) {
 func DeleteUser(w http.ResponseWriter, r *http.Request) {
 	logger.Info("DeleteUser called")
 
-	// Получение ID пользователя из параметров URL
 	params := mux.Vars(r)
 	id, err := strconv.Atoi(params["id"])
 	if err != nil {
@@ -309,7 +261,6 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Удаление задач, связанных с пользователем
 	_, err = tx.Exec("DELETE FROM tasks WHERE user_id = $1", id)
 	if err != nil {
 		logger.Error("Error deleting tasks: %v", err)
@@ -319,7 +270,6 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Info("Tasks for user ID %d deleted successfully", id)
 
-	// Удаление пользователя
 	_, err = tx.Exec("DELETE FROM users WHERE id = $1", id)
 	if err != nil {
 		logger.Error("Error deleting user: %v", err)
@@ -329,7 +279,6 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Info("User with ID %d deleted successfully", id)
 
-	// Завершение транзакции
 	err = tx.Commit()
 	if err != nil {
 		logger.Error("Error committing transaction: %v", err)
@@ -337,7 +286,6 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Обновление миграционного файла
 	if err = removeUserFromMigrationFile(id); err != nil {
 		logger.Error("Error removing user from migration file: %v", err)
 		http.Error(w, "Error removing user from migration file", http.StatusInternalServerError)

@@ -71,7 +71,6 @@ func GetUserTasks(w http.ResponseWriter, r *http.Request) {
 
 	query += ` ORDER BY hours DESC, minutes DESC`
 
-	// Формируем параметры для выполнения запроса
 	paramsList := []interface{}{userID}
 	if !startDate.IsZero() && !endDate.IsZero() {
 		paramsList = append(paramsList, startDate, endDate)
@@ -103,7 +102,6 @@ func GetUserTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Отправка успешного ответа клиенту с данными задач
 	w.Header().Set("Content-Type", "application/json")
 	if err = json.NewEncoder(w).Encode(tasks); err != nil {
 		logger.Error("Error encoding response: %v", err)
@@ -180,7 +178,6 @@ func StartTask(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Task created with ID: %d", task.ID)
 
-	// Добавление SQL миграции в файл
 	addTaskToMigrationFile(task)
 
 	w.WriteHeader(http.StatusCreated)

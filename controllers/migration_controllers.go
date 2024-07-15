@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"fmt"
+	"github.com/joho/godotenv"
 	"io/ioutil"
+	"log"
 	"os"
 	"strings"
 	"test-project/logger"
@@ -11,7 +13,7 @@ import (
 )
 
 func addTaskToMigrationFile(task models.Task) {
-	filePath := "migrations/20230707120000_insert_initial_tasks.sql"
+	filePath := os.Getenv("MIGRATION_TASKS")
 	migrationLine := fmt.Sprintf(
 		"INSERT INTO tasks (id, user_id, name, created_at, updated_at, start_time) VALUES (%d, %d, '%s', '%s', '%s', '%s');\n",
 		task.ID, task.UserID, task.Name, task.CreatedAt.Format(time.RFC3339), task.UpdatedAt.Format(time.RFC3339), task.StartTime.Format(time.RFC3339),
@@ -32,7 +34,7 @@ func addTaskToMigrationFile(task models.Task) {
 }
 
 func addUserToMigrationFile(user models.User) {
-	filePath := "migrations/20230707120000_insert_initial_users.sql"
+	filePath := os.Getenv("MIGRATION_USERS")
 	migrationLine := fmt.Sprintf(
 		"INSERT INTO users (id, passport_number, surname, name, patronymic, address, created_at, updated_at) VALUES (%d, '%s', '%s', '%s', '%s', '%s', NOW(), NOW());\n",
 		user.ID, user.PassportNumber, user.Surname, user.Name, user.Patronymic, user.Address,
@@ -45,31 +47,70 @@ func addUserToMigrationFile(user models.User) {
 	}
 	defer file.Close()
 
-	// Запись строки миграции в файл
 	if _, err = file.WriteString(migrationLine); err != nil {
 		logger.Error("Failed to write to migration file: %v", err)
 	}
 }
 
-func removeUserFromMigrationFile(userID int) error {
-	filePath := "migrations/20230707120000_insert_initial_users.sql"
+func updateUserInMigrationFile(updatedUser models.User, id int) {
+	filePath := os.Getenv("MIGRATION_USERS")
 
-	// Чтение файла в память
+	fileContent, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		logger.Warning("Failed to read migration file: %v", err)
+		return
+	}
+
+	lines := strings.Split(string(fileContent), "\n")
+
+	newMigrationLine := fmt.Sprintf(
+		"INSERT INTO users (id, passport_number, surname, name, patronymic, address, created_at, updated_at) VALUES (%d, '%s', '%s', '%s', '%s', '%s', NOW(), NOW());",
+		id, updatedUser.PassportNumber, updatedUser.Surname, updatedUser.Name, updatedUser.Patronymic, updatedUser.Address,
+	)
+
+	updated := false
+	for i, line := range lines {
+		if strings.Contains(line, fmt.Sprintf("(%d,", id)) {
+			lines[i] = newMigrationLine
+			updated = true
+			break
+		}
+	}
+
+	if !updated {
+		logger.Warning("User with ID %d not found in migration file.", id)
+		return
+	}
+
+	output := strings.Join(lines, "\n")
+	err = ioutil.WriteFile(filePath, []byte(output), 0644)
+	if err != nil {
+		logger.Error("Failed to write to migration file: %v", err)
+	} else {
+		logger.Info("Successfully updated migration line for user %s %s", updatedUser.Name, updatedUser.Surname)
+	}
+}
+
+func removeUserFromMigrationFile(userID int) error {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	filePath := os.Getenv("MIGRATION_USERS")
+
 	fileContent, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("could not read SQL file: %v", err)
 	}
 
-	// Преобразование содержимого файла в строки
 	lines := strings.Split(string(fileContent), "\n")
 
-	// Создание нового списка строк, в который будут записаны все строки, кроме той, что содержит нужный ID
 	var updatedLines []string
 	found := false
 
 	for _, line := range lines {
 		if strings.Contains(line, fmt.Sprintf("(%d,", userID)) {
-			// Логирование и пропуск строки с нужным ID
 			logger.Info("Removing migration line: %s", line)
 			found = true
 			continue
@@ -82,7 +123,6 @@ func removeUserFromMigrationFile(userID int) error {
 		return nil
 	}
 
-	// Запись обновленных данных обратно в файл
 	output := strings.Join(updatedLines, "\n")
 	err = ioutil.WriteFile(filePath, []byte(output), 0644)
 	if err != nil {
@@ -94,21 +134,17 @@ func removeUserFromMigrationFile(userID int) error {
 }
 
 func removeTaskFromMigrationFile(userID int) error {
-	filePath := "migrations/20230707120000_insert_initial_tasks.sql"
+	filePath := os.Getenv("MIGRATION_TASKS")
 
-	// Чтение файла в память
 	fileContent, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("could not read SQL file: %v", err)
 	}
 
-	// Преобразование содержимого файла в строки
 	lines := strings.Split(string(fileContent), "\n")
 
-	// Создание нового списка строк без строк, которые нужно удалить
 	var updatedLines []string
 	for _, line := range lines {
-		// Проверка и удаление строк, содержащих вставки задач с указанным userID
 		if strings.Contains(line, "INSERT INTO tasks") || strings.Contains(line, fmt.Sprintf("(%d,", userID)) {
 			logger.Info("Removing line: %s", line)
 		} else {
@@ -116,7 +152,6 @@ func removeTaskFromMigrationFile(userID int) error {
 		}
 	}
 
-	// Запись обновленных данных обратно в файл
 	output := strings.Join(updatedLines, "\n")
 	err = ioutil.WriteFile(filePath, []byte(output), 0644)
 	if err != nil {
