@@ -107,46 +107,59 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 func CreateUser(w http.ResponseWriter, r *http.Request) {
 	logger.Info("CreateUser called")
 
-	var user models.User
-	err := json.NewDecoder(r.Body).Decode(&user)
+	var newUser models.User
+	err := json.NewDecoder(r.Body).Decode(&newUser)
 	if err != nil {
 		logger.Error("Failed to decode request body: %v", err)
 		http.Error(w, "Failed to decode request body", http.StatusBadRequest)
 		return
 	}
-	logger.Info("User data received: %+v", user)
 
-	_, _, err = ValidatePassportNumber(user.PassportNumber, w)
+	if newUser.Name == "" || newUser.Surname == "" {
+		logger.Error("Name and Surname are required fields")
+		http.Error(w, "Name and Surname are required fields", http.StatusBadRequest)
+		return
+	}
+
+	_, _, err = ValidatePassportNumber(newUser.PassportNumber, w)
 	if err != nil {
 		return
 	}
 
-	db := database.DB
+	db := database.DB // Подключение к базе данных
+
+	var nextFreeID int
+	err = db.QueryRow("SELECT get_next_free_user_id()").Scan(&nextFreeID)
+	if err != nil {
+		logger.Error("Failed to get next free user ID: %v", err)
+		http.Error(w, "Failed to get next free user ID", http.StatusInternalServerError)
+		return
+	}
+
+	newUser.ID = nextFreeID
+	newUser.CreatedAt = time.Now().UTC()
+	newUser.UpdatedAt = newUser.CreatedAt
 
 	query := `
-        INSERT INTO users(passport_number, surname, name, patronymic, address, created_at, updated_at)
-        VALUES($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id
+        INSERT INTO users (id, passport_number, surname, name, patronymic, address, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     `
-	var userID int
-	err = db.QueryRowContext(r.Context(), query, user.PassportNumber, user.Surname, user.Name, user.Patronymic, user.Address, time.Now(), time.Now()).Scan(&userID)
+	_, err = db.ExecContext(r.Context(), query, newUser.ID, newUser.PassportNumber, newUser.Surname, newUser.Name, newUser.Patronymic, newUser.Address, newUser.CreatedAt, newUser.UpdatedAt)
 	if err != nil {
-		logger.Error("Error executing query: %v", err)
+		logger.Error("Error inserting user: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	logger.Info("User created with ID: %d", userID)
 
-	user.ID = userID
+	logger.Info("User created successfully with ID %d", newUser.ID)
 
-	addUserToMigrationFile(user)
+	addUserToMigrationFile(newUser) // Ваш метод для миграций
 
 	w.WriteHeader(http.StatusCreated)
-	if err = json.NewEncoder(w).Encode(user); err != nil {
+	if err = json.NewEncoder(w).Encode(newUser); err != nil {
 		logger.Error("Error encoding response: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
-	logger.Info("Response sent successfully")
 }
 
 // @Summary Update a user

@@ -12,8 +12,13 @@ import (
 	"time"
 )
 
+var (
+	filePathUserMigration = "migrations/20230707120000_insert_initial_users.sql"
+	filePathTaskMigration = "migrations/20230707120000_insert_initial_tasks.sql"
+)
+
 func addTaskToMigrationFile(task models.Task) {
-	filePath := os.Getenv("MIGRATION_TASKS")
+	filePath := filePathTaskMigration
 	migrationLine := fmt.Sprintf(
 		"INSERT INTO tasks (id, user_id, name, created_at, updated_at, start_time) VALUES (%d, %d, '%s', '%s', '%s', '%s');\n",
 		task.ID, task.UserID, task.Name, task.CreatedAt.Format(time.RFC3339), task.UpdatedAt.Format(time.RFC3339), task.StartTime.Format(time.RFC3339),
@@ -34,7 +39,7 @@ func addTaskToMigrationFile(task models.Task) {
 }
 
 func addUserToMigrationFile(user models.User) {
-	filePath := os.Getenv("MIGRATION_USERS")
+	filePath := filePathUserMigration
 	migrationLine := fmt.Sprintf(
 		"INSERT INTO users (id, passport_number, surname, name, patronymic, address, created_at, updated_at) VALUES (%d, '%s', '%s', '%s', '%s', '%s', NOW(), NOW());\n",
 		user.ID, user.PassportNumber, user.Surname, user.Name, user.Patronymic, user.Address,
@@ -53,7 +58,7 @@ func addUserToMigrationFile(user models.User) {
 }
 
 func updateUserInMigrationFile(updatedUser models.User, id int) {
-	filePath := os.Getenv("MIGRATION_USERS")
+	filePath := filePathUserMigration
 
 	fileContent, err := ioutil.ReadFile(filePath)
 	if err != nil {
@@ -97,7 +102,7 @@ func removeUserFromMigrationFile(userID int) error {
 		log.Fatal("Error loading .env file")
 	}
 
-	filePath := os.Getenv("MIGRATION_USERS")
+	filePath := filePathUserMigration
 
 	fileContent, err := ioutil.ReadFile(filePath)
 	if err != nil {
@@ -134,7 +139,7 @@ func removeUserFromMigrationFile(userID int) error {
 }
 
 func removeTaskFromMigrationFile(userID int) error {
-	filePath := os.Getenv("MIGRATION_TASKS")
+	filePath := filePathTaskMigration
 
 	fileContent, err := ioutil.ReadFile(filePath)
 	if err != nil {
