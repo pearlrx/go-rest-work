@@ -164,12 +164,23 @@ func StartTask(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info("Task timestamps: StartTime=%v, CreatedAt=%v, UpdatedAt=%v", task.StartTime, task.CreatedAt, task.UpdatedAt)
 
+	// Get the next free task ID
+	var nextFreeTaskID int
+	err = database.DB.QueryRow("SELECT get_next_free_task_id()").Scan(&nextFreeTaskID)
+	if err != nil {
+		logger.Error("Failed to get next free task ID: %v", err)
+		http.Error(w, "Failed to get next free task ID", http.StatusInternalServerError)
+		return
+	}
+
+	task.ID = nextFreeTaskID
+
 	query := `
-		INSERT INTO tasks (user_id, name, created_at, updated_at, start_time)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO tasks (id, user_id, name, created_at, updated_at, start_time)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id
 	`
-	err = database.DB.QueryRow(query, task.UserID, task.Name, task.CreatedAt, task.UpdatedAt, task.StartTime).Scan(&task.ID)
+	err = database.DB.QueryRow(query, task.ID, task.UserID, task.Name, task.CreatedAt, task.UpdatedAt, task.StartTime).Scan(&task.ID)
 	if err != nil {
 		logger.Error("Error inserting task: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
